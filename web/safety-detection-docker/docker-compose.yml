@@ -1,0 +1,45 @@
+# services:
+#   backend:
+#     build:
+#       context: ./backend
+#     container_name: backend
+#     command: python manage.py runserver 0.0.0.0:8080
+#     volumes:
+#       - ./backend:/code
+#       - ./frontend/build:/code/build
+
+#     ports:
+#       - "8080:8080"
+#     env_file:
+#       - .env
+
+  
+#   frontend:
+#     build:
+#       context: ./frontend
+#     container_name: frontend
+#     volumes:
+#       - ./frontend:/code
+#     ports:
+#       - "3000:3000"
+#     depends_on:
+#       - backend 
+
+
+services:
+  backend:
+    image: azuredocker.azurecr.io/backend:latest
+    container_name: backend
+    command: python manage.py runserver 0.0.0.0:8080
+    ports:
+      - "8080:8080"
+    environment:
+      - WEBSITES_PORT=8080
+    
+  frontend:
+    image: azuredocker.azurecr.io/frontend:latest
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    # depends_on:
+    #   - backend

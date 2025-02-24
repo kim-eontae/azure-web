@@ -1,0 +1,223 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+type: Opaque
+data:
+  OPENAI_API_KEY: c2stcHJvai1RZnEtNWppVzlUd2VQOHo4cVZycV9jWlJhVGN6VmFoQ0hpX1VkYlVfcXdCdFpfQ1lsMGJqVzhhR2c0N3VXSEh3cUxZSHNUVzFUM0JsYmtGSktjODd6N3VGQllZck1TemhsaUhjbDNYeEg1a01ZUmRzY21CU01Iak83OUE2cUt4aVVKMXhGWkpHZVIxWFUxNVh4N25KNkR4V1VB
+  DB_PASSWORD: IXExdzJlM3I0
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  DB_NAME: "humandb"
+  DB_USER: "human"
+  DB_HOST: "human-mysql.mysql.database.azure.com"
+  DB_PORT: "3306"
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: backend-static-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteMany
+  storageClassName: azurefile
+  azureFile:
+    secretName: azure-secret
+    shareName: backend-static
+    readOnly: false
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backend-static-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: azurefile
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: azuredocker.azurecr.io/new_backend_v2:latest
+          command: 
+            - "sh"
+            - "-c"
+            - |
+              python manage.py migrate && 
+              python manage.py migrate sessions && 
+              python manage.py collectstatic --noinput && 
+              python manage.py runserver 0.0.0.0:8080
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: OPENAI_API_KEY
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DB_PASSWORD
+            - name: DEBUG
+              value: "False"
+            - name: ALLOWED_HOSTS
+              value: "www.koreaemergency.com"  # 도메인 이름으로 변경
+          volumeMounts:
+            - name: backend-static
+              mountPath: /app/staticfiles
+      volumes:
+        - name: backend-static
+          persistentVolumeClaim:
+            claimName: backend-static-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: backend
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: azuredocker.azurecr.io/new_frontend_v2:latest
+          env:
+            - name: REACT_APP_API_URL
+              value: "/api"
+            - name: NODE_ENV
+              value: "production"
+          ports:
+            - containerPort: 3000
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "200m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: / 
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: / 
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: frontend
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  rules:
+  - host: www.koreaemergency.com  # 도메인 이름으로 변경
+    http:
+      paths:
+      - path: /api/*
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-service
+            port:
+              number: 8080
+      - path: /*
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-service
+            port:
+              number: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-backend-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - protocol: TCP
+          port: 8080
