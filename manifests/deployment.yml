@@ -1,0 +1,19 @@
+apiVersion : apps/v1
+kind: Deployment
+metadata:
+  name: kimeontaeazureweb 
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kimeontaeazureweb
+  template:
+    metadata:
+      labels:
+        app: kimeontaeazureweb 
+    spec:
+      containers:
+        - name: kimeontaeazureweb 
+          image: azuredocker.azurecr.io/kimeontaeazureweb
+          ports:
+          - containerPort: 8080
